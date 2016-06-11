@@ -41,10 +41,12 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/features2d/features2d.hpp>
 #include <sys/stat.h>
+#include <sys/file.h>
 
 #include <pthread.h>
 #include <math.h>
 #include <signal.h>
+
 
 
 typedef struct {
@@ -53,9 +55,6 @@ typedef struct {
 
 	uint8_t *depth_mid, *depth_front;
 	uint8_t *rgb_back, *rgb_mid, *rgb_front;
-
-	FILE* depth_fd;
-	FILE* image_fd;
 
 	uint16_t t_gamma[2048];
 	pthread_mutex_t mutex;
@@ -78,14 +77,24 @@ void depth_cb(freenect_device *dev, void *v_depth, uint32_t timestamp){
 
 	pthread_mutex_lock(&G_kt.mutex);
 
-	fseek(G_kt.depth_fd, SEEK_SET, 0);
-	fwrite(depth, sizeof(uint16_t), 640*480, G_kt.depth_fd);
+	FILE* fd = fopen("depth","w");
+	assert( fd );
+	flock( fileno(fd), LOCK_SH );
+	fprintf(fd, "class=Mat:Cv\n");
+	fprintf(fd, "cols=640\n");
+	fprintf(fd, "rows=480\n");
+	fprintf(fd, "step=%d\n", 640*2);
+	fprintf(fd, "type=%d\n", 3);       // CV_16S
+	fprintf(fd, "data=<%d|", 640*480*2);
+	fwrite(depth, sizeof(uint16_t), 640*480, fd);
+	flock( fileno(fd), LOCK_UN );
+	fclose(fd);
 
 	pthread_mutex_unlock(&G_kt.mutex);
 }
 
 void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp){
-	static unsigned char res[640*480];
+	static unsigned char out_rgb[640*480*3];
 
 	pthread_mutex_lock(&G_kt.mutex);
 
@@ -97,13 +106,21 @@ void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp){
 
 
 	int i;
-	for (i=0; i<640*480; i++){
-		res[i] = (G_kt.rgb_mid[i*3]+G_kt.rgb_mid[i*3+1]+G_kt.rgb_mid[i*3+2])/3;
+	for (i=0; i<640*480*3; i++){
+		out_rgb[i] = G_kt.rgb_mid[i];
 	}
 
-
-	fseek(G_kt.image_fd, SEEK_SET, 0);
-	fwrite(res, sizeof(char), 640*480, G_kt.image_fd);
+	FILE* fd = fopen("image","w");
+	flock( fileno(fd), LOCK_SH );
+	fprintf(fd, "class=Mat:Cv\n");
+	fprintf(fd, "cols=640\n");
+	fprintf(fd, "rows=480\n");
+	fprintf(fd, "step=%d\n", 640*3);
+	fprintf(fd, "type=%d\n", 0);
+	fprintf(fd, "data=<%d|", 640*480*3);
+	fwrite(out_rgb, sizeof(uint8_t), 640*480*3, fd);
+	flock( fileno(fd), LOCK_UN );
+	fclose(fd);
 
 	pthread_mutex_unlock(&G_kt.mutex);
 }
@@ -159,9 +176,6 @@ int kinect_init(Kinect* kt){
 	}
 
 
-	kt->depth_fd = fopen("./depth","w");
-	kt->image_fd = fopen("./image","w");
-
 	int freenect_angle = 0;
 	freenect_set_tilt_degs(kt->dev,freenect_angle);
 	freenect_set_led(kt->dev,LED_RED);
@@ -186,8 +200,6 @@ void kinect_finish(Kinect* kt){
 	freenect_stop_video(kt->dev);
 	freenect_close_device(kt->dev);
 	freenect_shutdown(kt->ctx);
-	fclose(kt->depth_fd);
-	fclose(kt->image_fd);
 }
 
 
