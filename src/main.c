@@ -77,9 +77,10 @@ void depth_cb(freenect_device *dev, void *v_depth, uint32_t timestamp){
 
 	pthread_mutex_lock(&G_kt.mutex);
 
-	FILE* fd = fopen("depth","w");
+	FILE* fd = fopen("depth","a+");
 	assert( fd );
-	flock( fileno(fd), LOCK_SH );
+	flock( fileno(fd), LOCK_EX );
+	ftruncate( fileno(fd), 0 );
 	fprintf(fd, "class=Mat:Cv\n");
 	fprintf(fd, "cols=640\n");
 	fprintf(fd, "rows=480\n");
@@ -94,7 +95,7 @@ void depth_cb(freenect_device *dev, void *v_depth, uint32_t timestamp){
 }
 
 void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp){
-	static unsigned char out_rgb[640*480*3];
+	//static unsigned char out_rgb[640*480*3];
 
 	pthread_mutex_lock(&G_kt.mutex);
 
@@ -105,20 +106,25 @@ void rgb_cb(freenect_device *dev, void *rgb, uint32_t timestamp){
 	G_kt.rgb_mid = (uint8_t*)rgb;
 
 
-	int i;
+	/*int i;
 	for (i=0; i<640*480*3; i++){
 		out_rgb[i] = G_kt.rgb_mid[i];
-	}
+	}*/
 
-	FILE* fd = fopen("image","w");
-	flock( fileno(fd), LOCK_SH );
+	
+
+
+	FILE* fd = fopen("image","a+");
+	assert( fd );
+	flock( fileno(fd), LOCK_EX );
+	ftruncate( fileno(fd), 0 );
 	fprintf(fd, "class=Mat:Cv\n");
 	fprintf(fd, "cols=640\n");
 	fprintf(fd, "rows=480\n");
 	fprintf(fd, "step=%d\n", 640*3);
-	fprintf(fd, "type=%d\n", 0);
+	fprintf(fd, "type=%d\n", 16);
 	fprintf(fd, "data=<%d|", 640*480*3);
-	fwrite(out_rgb, sizeof(uint8_t), 640*480*3, fd);
+	fwrite( rgb, sizeof(uint8_t), 640*480*3, fd);
 	flock( fileno(fd), LOCK_UN );
 	fclose(fd);
 
@@ -149,28 +155,37 @@ int kinect_init(Kinect* kt){
 		kt->t_gamma[i] = v*6*256;
 	}
 
+
+
 	if (freenect_init(&kt->ctx, NULL) < 0) {
-		printf("freenect_init() failed\n");
+		fprintf(stderr, "freenect_init() failed\n");
 		return 1;
 	}
+
+
 
 	freenect_set_log_level(kt->ctx, FREENECT_LOG_DEBUG);
 	freenect_select_subdevices(kt->ctx, (freenect_device_flags)(FREENECT_DEVICE_MOTOR | FREENECT_DEVICE_CAMERA));
 
+
+
 	int nr_devices = freenect_num_devices (kt->ctx);
-	printf ("Number of devices found: %d\n", nr_devices);
+	fprintf(stderr, "Number of devices found: %d\n", nr_devices);
 
 
 
 	int user_device_number = 0;
 
 	if (nr_devices < 1) {
+		fprintf(stderr, "No devices detected\n");
 		freenect_shutdown(kt->ctx);
 		return 1;
 	}
 
+
+
 	if (freenect_open_device(kt->ctx, &kt->dev, user_device_number) < 0) {
-		printf("Could not open device\n");
+		fprintf(stderr, "Could not open device\n");
 		freenect_shutdown(kt->ctx);
 		return 1;
 	}
@@ -216,8 +231,8 @@ void kinect_read(Kinect* kt){
 /*======================================- MAIN -=======================================*/
 
 void intHandler(int dummy){
-	fprintf(stderr,"Kinnnect Finalizing\n");
 	kinect_finish(&G_kt);
+	fprintf(stderr,"Kinnnect Finalizing\n");
 	sleep(1);
 	exit(0);
 }
@@ -230,13 +245,13 @@ int main(int argc, char **argv){
 		printf("Error\n");
 		return 1;
 	}
-	
+
 	
 	//signal(SIGQUIT, intHandler);
 	signal(SIGINT, intHandler);
 	//signal(SIGHUP, intHandler);
 
-	while (1){
+	while ( !feof(stdin) ){
 		kinect_read(&G_kt);
 		printf("#end\n");
 		fflush(stdout);
